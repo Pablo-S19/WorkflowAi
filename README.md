@@ -106,8 +106,8 @@ Open **https://workflow-ai-roan.vercel.app**. No installation is needed, and the
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/Pablo-S19/WorkflowAi.git
-   cd WorkflowAi
+   git clone https://github.com/Pablo-S19/workflow-ai-productivity.git
+   cd workflow-ai-productivity
    ```
 
 2. **Install dependencies**
