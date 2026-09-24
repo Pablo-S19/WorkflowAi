@@ -14,7 +14,6 @@ import {
   Maximize2,
   Minimize2,
   Copy,
-  Check,
   Bookmark,
   RefreshCw,
   Plus,
@@ -26,15 +25,11 @@ import {
   AlertCircle,
   ShieldAlert,
   ArrowRight,
-  Filter,
   CheckCircle2,
   Play,
   Pause,
   RotateCcw,
-  Sliders,
-  ChevronRight,
-  ExternalLink,
-  ChevronDown
+  ChevronRight
 } from 'lucide-react';
 
 // Midnight Citrus Theme Tokens:
@@ -88,7 +83,78 @@ async function callGeminiService(prompt: string, systemInstruction = ''): Promis
   throw new Error('The AI request could not be completed.');
 }
 
-function getLocalItem(key, defaultValue) {
+// ---------- Shared types ----------
+interface ToastData {
+  message: string;
+}
+
+interface Task {
+  id: string;
+  name: string;
+  duration: string;
+  urgency: string;
+  importance: string;
+}
+
+interface HistoryItem {
+  id: string;
+  date: string;
+  tool: string;
+  title: string;
+  content: string;
+  meta?: Record<string, unknown>;
+}
+
+type NewHistoryItem = Omit<HistoryItem, 'id' | 'date'>;
+
+interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+}
+
+interface Stats {
+  totalActions: number;
+  estimatedHoursSaved: string;
+  savedArtifactsCount: number;
+  chatCount: number;
+}
+
+interface RouteResult {
+  tool: string;
+  reasoning: string;
+  prefill: string;
+}
+
+interface EmailInitial {
+  purpose?: string;
+  audience?: string;
+  tone?: string;
+  keyPoints?: string;
+}
+
+interface MeetingOutput {
+  summary: string;
+  decisions?: string[];
+  actionItems?: { task: string; owner: string; deadline: string }[];
+  openQuestions?: string[];
+}
+
+interface ResearchOutput {
+  overview: string;
+  keyFindings?: string[];
+  importantConcepts?: string[];
+  recommendations?: string[];
+}
+
+type ShowToast = (message: string) => void;
+type SaveHistory = (item: NewHistoryItem) => void;
+type Navigate = (tab: string) => void;
+
+function getErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+function getLocalItem<T>(key: string, defaultValue: T): T {
   try {
     const val = localStorage.getItem(key);
     return val ? JSON.parse(val) : defaultValue;
@@ -97,7 +163,7 @@ function getLocalItem(key, defaultValue) {
   }
 }
 
-function setLocalItem(key, val) {
+function setLocalItem(key: string, val: unknown): void {
   try {
     localStorage.setItem(key, JSON.stringify(val));
   } catch (e) {
@@ -105,7 +171,7 @@ function setLocalItem(key, val) {
   }
 }
 
-function Toast({ toast, onClose }) {
+function Toast({ toast, onClose }: { toast: ToastData | null; onClose: () => void }) {
   if (!toast) return null;
   return (
     <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 bg-[#20251F] text-white px-4 py-2.5 rounded-lg shadow-lg border border-[#DFE1D8]/20 animate-fade-in text-xs font-medium">
@@ -118,7 +184,7 @@ function Toast({ toast, onClose }) {
   );
 }
 
-function HumanReviewBadge({ className = '' }) {
+function HumanReviewBadge({ className = '' }: { className?: string }) {
   return (
     <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#F6F5F0] border border-[#DFE1D8] text-[11px] font-medium text-[#72756F] ${className}`}>
       <span className="w-1.5 h-1.5 rounded-full bg-[#D08A3C]" />
@@ -127,9 +193,18 @@ function HumanReviewBadge({ className = '' }) {
   );
 }
 
-function CommandPalette({ isOpen, onClose, onNavigate, tasks, onRunCommand }) {
+function CommandPalette({
+  isOpen,
+  onClose,
+  onNavigate
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onNavigate: Navigate;
+  tasks?: Task[];
+}) {
   const [query, setQuery] = useState('');
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -222,13 +297,23 @@ function CommandPalette({ isOpen, onClose, onNavigate, tasks, onRunCommand }) {
   );
 }
 
-function FocusModeOverlay({ isOpen, onClose, tasks, onLogFocusTime }) {
+function FocusModeOverlay({
+  isOpen,
+  onClose,
+  tasks,
+  onLogFocusTime
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  tasks: Task[];
+  onLogFocusTime: (secs: number) => void;
+}) {
   const [selectedTask, setSelectedTask] = useState('');
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [isRunning, setIsRunning] = useState(false);
 
   useEffect(() => {
-    let interval = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
     if (isRunning && secondsLeft > 0) {
       interval = setInterval(() => {
         setSecondsLeft((s) => {
@@ -241,7 +326,9 @@ function FocusModeOverlay({ isOpen, onClose, tasks, onLogFocusTime }) {
         });
       }, 1000);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [isRunning, secondsLeft, onLogFocusTime]);
 
   if (!isOpen) return null;
@@ -333,11 +420,16 @@ function FocusModeOverlay({ isOpen, onClose, tasks, onLogFocusTime }) {
   );
 }
 
-function CommandCenterView({ onNavigate, onDirectToolLoad }) {
+function CommandCenterView({
+  onDirectToolLoad
+}: {
+  onNavigate?: Navigate;
+  onDirectToolLoad: (tool: string, prefill: string) => void;
+}) {
   const [commandInput, setCommandInput] = useState('');
   const [isRouting, setIsRouting] = useState(false);
-  const [routeResult, setRouteResult] = useState(null);
-  const [error, setError] = useState(null);
+  const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const suggestedCommands = [
     { label: 'Draft client extension email', prompt: 'Draft an email requesting a deadline extension for client deliverables', tool: 'email' },
@@ -347,7 +439,7 @@ function CommandCenterView({ onNavigate, onDirectToolLoad }) {
     { label: 'Improve my meeting agenda', prompt: 'Critique and refine an agenda for a product strategy roadmap meeting', tool: 'chat' }
   ];
 
-  const handleRoute = async (textToRoute) => {
+  const handleRoute = async (textToRoute?: string) => {
     const query = textToRoute || commandInput;
     if (!query.trim()) return;
 
@@ -387,7 +479,7 @@ Respond strictly with valid JSON:
       }
       setRouteResult(parsed);
     } catch (err) {
-      setError(err.message || 'Routing failed. Please choose a tool manually.');
+      setError(getErrorMessage(err, 'Routing failed. Please choose a tool manually.'));
     } finally {
       setIsRouting(false);
     }
@@ -512,7 +604,17 @@ Respond strictly with valid JSON:
   );
 }
 
-function OverviewView({ onNavigate, stats, recentHistory, tasks }) {
+function OverviewView({
+  onNavigate,
+  stats,
+  recentHistory,
+  tasks
+}: {
+  onNavigate: Navigate;
+  stats: Stats;
+  recentHistory: HistoryItem[];
+  tasks: Task[];
+}) {
   const quickActions = [
     { id: 'email', title: 'Draft an email', desc: 'Tone-calibrated client or team communications', tag: 'Communication' },
     { id: 'tasks', title: 'Plan my day', desc: 'Eisenhower matrix prioritization & timeline', tag: 'Execution' },
@@ -697,14 +799,22 @@ function OverviewView({ onNavigate, stats, recentHistory, tasks }) {
   );
 }
 
-function EmailGeneratorView({ initialData, onSaveHistory, showToast }) {
+function EmailGeneratorView({
+  initialData,
+  onSaveHistory,
+  showToast
+}: {
+  initialData: EmailInitial | null;
+  onSaveHistory: SaveHistory;
+  showToast: ShowToast;
+}) {
   const [purpose, setPurpose] = useState(initialData?.purpose || '');
   const [audience, setAudience] = useState(initialData?.audience || 'Client');
   const [tone, setTone] = useState(initialData?.tone || 'Formal');
   const [keyPoints, setKeyPoints] = useState(initialData?.keyPoints || '');
 
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
 
@@ -745,7 +855,7 @@ Body:
       setSubject(extractedSubject);
       setBody(extractedBody);
     } catch (err) {
-      setError(err.message || 'Something went wrong while generating this email. Please try again.');
+      setError(getErrorMessage(err, 'Something went wrong while generating this email. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -958,15 +1068,21 @@ Body:
   );
 }
 
-function MeetingNotesView({ onSaveHistory, showToast }) {
+function MeetingNotesView({
+  onSaveHistory,
+  showToast
+}: {
+  onSaveHistory: SaveHistory;
+  showToast: ShowToast;
+}) {
   const [meetingTitle, setMeetingTitle] = useState('');
   const [participants, setParticipants] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [rawNotes, setRawNotes] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [structuredOutput, setStructuredOutput] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [structuredOutput, setStructuredOutput] = useState<MeetingOutput | null>(null);
 
   const handleSummarize = async () => {
     if (!rawNotes.trim()) {
@@ -1017,7 +1133,7 @@ Format strictly as JSON with this structure:
       }
       setStructuredOutput(parsed);
     } catch (err) {
-      setError(err.message || 'The AI request could not be completed. Please try again.');
+      setError(getErrorMessage(err, 'The AI request could not be completed. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -1240,13 +1356,13 @@ ${structuredOutput.openQuestions?.map((q) => `? ${q}`).join('\n')}
                 </div>
 
                 {/* 4. Open Questions */}
-                {structuredOutput.openQuestions?.length > 0 && (
+                {(structuredOutput.openQuestions?.length ?? 0) > 0 && (
                   <div className="p-3.5 bg-[#F6F5F0] rounded-lg border border-[#DFE1D8]">
                     <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#20251F] mb-1">
                       Open Questions & Follow-ups
                     </h4>
                     <ul className="space-y-1">
-                      {structuredOutput.openQuestions.map((q, i) => (
+                      {structuredOutput.openQuestions?.map((q, i) => (
                         <li key={i} className="text-xs text-[#72756F] italic">
                           • {q}
                         </li>
@@ -1263,7 +1379,19 @@ ${structuredOutput.openQuestions?.map((q) => `? ${q}`).join('\n')}
   );
 }
 
-function TaskPlannerView({ tasks, onAddTask, onRemoveTask, onSaveHistory, showToast }) {
+function TaskPlannerView({
+  tasks,
+  onAddTask,
+  onRemoveTask,
+  onSaveHistory,
+  showToast
+}: {
+  tasks: Task[];
+  onAddTask: (task: Task) => void;
+  onRemoveTask: (id: string) => void;
+  onSaveHistory: SaveHistory;
+  showToast: ShowToast;
+}) {
   const [taskName, setTaskName] = useState('');
   const [duration, setDuration] = useState('45m');
   const [urgency, setUrgency] = useState('Urgent');
@@ -1272,9 +1400,9 @@ function TaskPlannerView({ tasks, onAddTask, onRemoveTask, onSaveHistory, showTo
 
   const [isLoading, setIsLoading] = useState(false);
   const [aiSchedule, setAiSchedule] = useState('');
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmitTask = (e) => {
+  const handleSubmitTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskName.trim()) return;
     onAddTask({
@@ -1325,7 +1453,7 @@ Requirements:
       );
       setAiSchedule(response);
     } catch (err) {
-      setError(err.message || 'Failed to generate schedule.');
+      setError(getErrorMessage(err, 'Failed to generate schedule.'));
     } finally {
       setIsLoading(false);
     }
@@ -1609,14 +1737,20 @@ Requirements:
   );
 }
 
-function ResearchAssistantView({ onSaveHistory, showToast }) {
+function ResearchAssistantView({
+  onSaveHistory,
+  showToast
+}: {
+  onSaveHistory: SaveHistory;
+  showToast: ShowToast;
+}) {
   const [mode, setMode] = useState('analyse'); // 'analyse' | 'topic'
   const [inputText, setInputText] = useState('');
   const [topic, setTopic] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [researchOutput, setResearchOutput] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [researchOutput, setResearchOutput] = useState<ResearchOutput | null>(null);
 
   const handleResearch = async () => {
     if (mode === 'analyse' && !inputText.trim()) {
@@ -1680,7 +1814,7 @@ Strict JSON structure (DO NOT fabricate fake URLs or external links; state estab
       }
       setResearchOutput(parsed);
     } catch (err) {
-      setError(err.message || 'Research synthesis failed. Please try again.');
+      setError(getErrorMessage(err, 'Research synthesis failed. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -1899,9 +2033,21 @@ Strict JSON structure (DO NOT fabricate fake URLs or external links; state estab
   );
 }
 
-function ChatAssistantView({ messages, onSendMessage, onClearChat, isLoading, onNavigate }) {
+function ChatAssistantView({
+  messages,
+  onSendMessage,
+  onClearChat,
+  isLoading,
+  onNavigate
+}: {
+  messages: ChatMessage[];
+  onSendMessage: (text: string) => void;
+  onClearChat: () => void;
+  isLoading: boolean;
+  onNavigate: Navigate;
+}) {
   const [inputVal, setInputVal] = useState('');
-  const chatBottomRef = useRef(null);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1914,7 +2060,7 @@ function ChatAssistantView({ messages, onSendMessage, onClearChat, isLoading, on
     'Help me prepare for a meeting'
   ];
 
-  const handleSend = (e) => {
+  const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputVal.trim() || isLoading) return;
     onSendMessage(inputVal.trim());
@@ -2048,10 +2194,20 @@ function ChatAssistantView({ messages, onSendMessage, onClearChat, isLoading, on
   );
 }
 
-function UnifiedHistoryView({ history, onDeleteItem, onClearAll, showToast }) {
+function UnifiedHistoryView({
+  history,
+  onDeleteItem,
+  onClearAll,
+  showToast
+}: {
+  history: HistoryItem[];
+  onDeleteItem: (id: string) => void;
+  onClearAll: () => void;
+  showToast: ShowToast;
+}) {
   const [filterTool, setFilterTool] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewItem, setViewItem] = useState(null);
+  const [viewItem, setViewItem] = useState<HistoryItem | null>(null);
 
   const filtered = history.filter((item) => {
     const matchesTool = filterTool === 'All' || item.tool.toLowerCase() === filterTool.toLowerCase();
@@ -2203,7 +2359,13 @@ function UnifiedHistoryView({ history, onDeleteItem, onClearAll, showToast }) {
   );
 }
 
-function PromptLibraryView({ onUsePrompt, showToast }) {
+function PromptLibraryView({
+  onUsePrompt,
+  showToast
+}: {
+  onUsePrompt: (tool: string, promptText: string) => void;
+  showToast: ShowToast;
+}) {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [search, setSearch] = useState('');
 
@@ -2359,11 +2521,19 @@ function PromptLibraryView({ onUsePrompt, showToast }) {
   );
 }
 
-function ProductivityInsightsView({ stats, history, focusSeconds }) {
+function ProductivityInsightsView({
+  stats,
+  history,
+  focusSeconds
+}: {
+  stats: Stats;
+  history: HistoryItem[];
+  focusSeconds: number;
+}) {
   const focusMinutes = Math.floor(focusSeconds / 60);
 
   // Group tool frequencies
-  const toolCounts = history.reduce((acc, item) => {
+  const toolCounts = history.reduce<Record<string, number>>((acc, item) => {
     acc[item.tool] = (acc[item.tool] || 0) + 1;
     return acc;
   }, {});
@@ -2449,7 +2619,15 @@ function ProductivityInsightsView({ stats, history, focusSeconds }) {
   );
 }
 
-function SettingsView({ onClearAllData, stats, showToast }) {
+function SettingsView({
+  onClearAllData,
+  stats,
+  showToast
+}: {
+  onClearAllData: () => void;
+  stats: Stats;
+  showToast: ShowToast;
+}) {
   const [confirmClear, setConfirmClear] = useState(false);
 
   const handleClear = () => {
@@ -2558,29 +2736,29 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [focusModeOpen, setFocusModeOpen] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [toast, setToast] = useState<ToastData | null>(null);
 
   // Cross-tool data transfer state
-  const [emailInitial, setEmailInitial] = useState(null);
+  const [emailInitial, setEmailInitial] = useState<EmailInitial | null>(null);
 
   // Local Storage state hooks
-  const [history, setHistory] = useState(() => getLocalItem(STORAGE_KEYS.UNIFIED_HISTORY, []));
-  const [tasks, setTasks] = useState(() =>
-    getLocalItem(STORAGE_KEYS.TASKS, [
+  const [history, setHistory] = useState<HistoryItem[]>(() => getLocalItem<HistoryItem[]>(STORAGE_KEYS.UNIFIED_HISTORY, []));
+  const [tasks, setTasks] = useState<Task[]>(() =>
+    getLocalItem<Task[]>(STORAGE_KEYS.TASKS, [
       { id: '1', name: 'Refine customer onboarding presentation', duration: '45m', urgency: 'Urgent', importance: 'Important' },
       { id: '2', name: 'Draft sprint 34 retrospective summary', duration: '30m', urgency: 'Not urgent', importance: 'Important' },
       { id: '3', name: 'Review third-party vendor licensing contracts', duration: '60m', urgency: 'Urgent', importance: 'Not important' }
     ])
   );
-  const [chatMessages, setChatMessages] = useState(() =>
-    getLocalItem(STORAGE_KEYS.CHAT, [
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() =>
+    getLocalItem<ChatMessage[]>(STORAGE_KEYS.CHAT, [
       {
         role: 'model',
         text: 'Hello. I am your WorkFlow AI workbench copilot. How can I assist you with communications, meeting audits, task planning, or research today?'
       }
     ])
   );
-  const [focusSeconds, setFocusSeconds] = useState(() => getLocalItem(STORAGE_KEYS.FOCUS_STATS, 0));
+  const [focusSeconds, setFocusSeconds] = useState<number>(() => getLocalItem<number>(STORAGE_KEYS.FOCUS_STATS, 0));
   const [isChatLoading, setIsChatLoading] = useState(false);
 
   // Sync to localStorage
@@ -2591,7 +2769,7 @@ export default function App() {
 
   // Global Keyboard Shortcut: Cmd+K / Ctrl+K
   useEffect(() => {
-    const handleKeyDown = (e) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setCommandPaletteOpen((prev) => !prev);
@@ -2601,12 +2779,12 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const showToast = (message) => {
+  const showToast: ShowToast = (message) => {
     setToast({ message });
     setTimeout(() => setToast(null), 3000);
   };
 
-  const handleSaveToHistory = (item) => {
+  const handleSaveToHistory: SaveHistory = (item) => {
     const newEntry = {
       id: Date.now().toString(),
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
@@ -2615,7 +2793,7 @@ export default function App() {
     setHistory((prev) => [newEntry, ...prev]);
   };
 
-  const handleDeleteHistoryItem = (id) => {
+  const handleDeleteHistoryItem = (id: string) => {
     setHistory((prev) => prev.filter((i) => i.id !== id));
   };
 
@@ -2624,17 +2802,17 @@ export default function App() {
     showToast('History cleared');
   };
 
-  const handleAddTask = (task) => {
+  const handleAddTask = (task: Task) => {
     setTasks((prev) => [...prev, task]);
     showToast(`Added "${task.name}"`);
   };
 
-  const handleRemoveTask = (id) => {
+  const handleRemoveTask = (id: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   };
 
-  const handleSendChatMessage = async (userText) => {
-    const updated = [...chatMessages, { role: 'user', text: userText }];
+  const handleSendChatMessage = async (userText: string) => {
+    const updated: ChatMessage[] = [...chatMessages, { role: 'user', text: userText }];
     setChatMessages(updated);
     setIsChatLoading(true);
 
@@ -2659,7 +2837,7 @@ You are a helpful workplace assistant. Help the user with workplace communicatio
     }
   };
 
-  const handleDirectToolLoad = (tool, prefill) => {
+  const handleDirectToolLoad = (tool: string, prefill: string) => {
     if (tool === 'email') {
       setEmailInitial({ purpose: prefill });
       setActiveTab('email');
@@ -2674,7 +2852,7 @@ You are a helpful workplace assistant. Help the user with workplace communicatio
     }
   };
 
-  const handleUsePrompt = (tool, promptText) => {
+  const handleUsePrompt = (tool: string, promptText: string) => {
     if (tool === 'email') {
       setEmailInitial({ purpose: promptText });
       setActiveTab('email');
@@ -2752,7 +2930,7 @@ You are a helpful workplace assistant. Help the user with workplace communicatio
       <CommandPalette
         isOpen={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
-        onNavigate={(target) => {
+        onNavigate={(target: string) => {
           if (target === 'focus') setFocusModeOpen(true);
           else setActiveTab(target);
         }}
@@ -2764,7 +2942,7 @@ You are a helpful workplace assistant. Help the user with workplace communicatio
         isOpen={focusModeOpen}
         onClose={() => setFocusModeOpen(false)}
         tasks={tasks}
-        onLogFocusTime={(secs) => {
+        onLogFocusTime={(secs: number) => {
           setFocusSeconds((prev) => prev + secs);
           showToast('Focus session logged to Insights');
         }}
