@@ -3,7 +3,7 @@
 An AI-powered productivity workbench that helps users draft emails, summarise meetings, plan their day, research topics and chat with an assistant, all from one dashboard.
 
 **Live demo:** https://workflow-ai-roan.vercel.app
-**Source code:** https://github.com/Pablo-S19/WorkflowAi
+**Source code:** https://github.com/Pablo-S19/workflow-ai-productivity
 
 ---
 
